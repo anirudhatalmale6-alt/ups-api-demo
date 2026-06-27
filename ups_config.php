@@ -2,12 +2,29 @@
 /**
  * UPS API Configuration & Helper Functions
  *
- * Shared config file - included by both pages.
- * Set your credentials here ONCE and both pages will use them.
+ * Uses the OFFICIAL UPS PHP SDK for OAuth authentication:
+ *   https://github.com/UPS-API/UPS-SDKs (PHP branch)
  *
- * API Reference: https://github.com/UPS-API/api-documentation
- * Developer Portal: https://developer.ups.com
+ * The UPS SDK provides the ClientCredentialService class for OAuth token
+ * generation. Rating and Address Validation are REST API calls (UPS does
+ * not provide PHP classes for those - only OpenAPI specs):
+ *   https://github.com/UPS-API/api-documentation
+ *
+ * Set your credentials here ONCE - both pages use this file.
  */
+
+// ============================================================================
+// LOAD THE OFFICIAL UPS PHP SDK
+// Source: https://github.com/UPS-API/UPS-SDKs/tree/PHP/UPS_PHP_ClientCredential_Sdk
+// ============================================================================
+require_once __DIR__ . '/UPS_PHP_ClientCredential_Sdk/src/ClientCredentialConstants.php';
+require_once __DIR__ . '/UPS_PHP_ClientCredential_Sdk/src/HttpClient.php';
+require_once __DIR__ . '/UPS_PHP_ClientCredential_Sdk/src/TokenInfo.php';
+require_once __DIR__ . '/UPS_PHP_ClientCredential_Sdk/src/UPSOauthResponse.php';
+require_once __DIR__ . '/UPS_PHP_ClientCredential_Sdk/src/ClientCredentialService.php';
+
+use UpsPhpClientCredentialSdk\ClientCredentialService;
+use UpsPhpClientCredentialSdk\HttpClient;
 
 // ============================================================================
 // CREDENTIALS - Replace these with your UPS Developer Portal values
@@ -16,23 +33,25 @@ define('UPS_CLIENT_ID',      'YOUR_CLIENT_ID');       // OAuth Client ID
 define('UPS_CLIENT_SECRET',  'YOUR_CLIENT_SECRET');    // OAuth Client Secret
 define('UPS_ACCOUNT_NUMBER', 'YOUR_ACCOUNT_NUMBER');   // 6-digit UPS shipper number
 
-// Set to true for sandbox (test data), false for production (live rates)
+// true = sandbox (test), false = production (live rates)
 define('UPS_SANDBOX', true);
 
 // ============================================================================
-// API ENDPOINTS (auto-configured based on sandbox/production)
-// Sandbox docs: https://github.com/UPS-API/api-documentation
+// API ENDPOINTS
+// The UPS SDK hardcodes the production OAuth URL. For sandbox, we override it
+// by subclassing. Rating & Address Validation endpoints set here.
+// Docs: https://github.com/UPS-API/api-documentation
 // ============================================================================
 define('UPS_BASE_URL',    UPS_SANDBOX ? 'https://wwwcie.ups.com' : 'https://onlinetools.ups.com');
 define('UPS_OAUTH_URL',   UPS_BASE_URL . '/security/v1/oauth/token');
-define('UPS_RATING_URL',  UPS_BASE_URL . '/api/rating/v1/Shop');          // "Shop" = all services
-define('UPS_RATE_URL',    UPS_BASE_URL . '/api/rating/v1/Rate');          // "Rate" = single service
+define('UPS_RATING_URL',  UPS_BASE_URL . '/api/rating/v1/Shop');          // Returns ALL services
+define('UPS_RATE_URL',    UPS_BASE_URL . '/api/rating/v1/Rate');          // Single service
 define('UPS_ADDRESS_URL', UPS_BASE_URL . '/api/addressvalidation/v1/3');  // 3 = validate + classify
-define('UPS_TIT_URL',     UPS_BASE_URL . '/api/shipments/v1/transittimes'); // Time In Transit
+define('UPS_TIT_URL',     UPS_BASE_URL . '/api/shipments/v1/transittimes');
 
 // ============================================================================
-// UPS SERVICE CODE LOOKUP
-// Full list from: https://github.com/UPS-API/api-documentation/blob/main/Rating.yaml
+// UPS SERVICE CODES
+// From: https://github.com/UPS-API/api-documentation/blob/main/Rating.yaml
 // ============================================================================
 define('UPS_SERVICES', [
     '01' => 'UPS Next Day Air',
@@ -79,18 +98,20 @@ define('UPS_PACKAGING', [
 
 
 // ============================================================================
-// HELPER FUNCTIONS
+// AUTHENTICATION USING OFFICIAL UPS SDK
 // ============================================================================
 
 /**
- * Get an OAuth 2.0 access token using client credentials grant.
- * Caches token in session for ~4 hours to avoid re-authenticating every request.
+ * Get an OAuth 2.0 access token using the official UPS ClientCredentialService.
  *
- * OAuth spec: https://github.com/UPS-API/api-documentation/blob/main/OAuthClientCredentials.yaml
+ * The SDK's ClientCredentialService handles the OAuth flow internally.
+ * We wrap it here to add session-based caching and sandbox support.
+ *
+ * SDK source: https://github.com/UPS-API/UPS-SDKs/tree/PHP/UPS_PHP_ClientCredential_Sdk
  */
 function ups_get_token(): array
 {
-    // Simple session-based caching
+    // Session-based token caching (token valid ~4 hours)
     if (session_status() === PHP_SESSION_NONE) {
         session_start();
     }
@@ -98,89 +119,99 @@ function ups_get_token(): array
         return ['token' => $_SESSION['ups_token']];
     }
 
-    $ch = curl_init(UPS_OAUTH_URL);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POST           => true,
-        CURLOPT_POSTFIELDS     => 'grant_type=client_credentials',
-        CURLOPT_HTTPHEADER     => [
+    // The official SDK's ClientCredentialService uses ClientCredentialConstants::BASE_URL
+    // which is hardcoded to production. For sandbox support, we make a direct call
+    // using the SDK's HttpClient class with our configured URL.
+    $httpClient = new HttpClient();
+
+    if (UPS_SANDBOX) {
+        // Sandbox: use SDK's HttpClient directly with sandbox OAuth URL
+        $authorization = "Basic " . base64_encode(UPS_CLIENT_ID . ':' . UPS_CLIENT_SECRET);
+        $headers = [
             'Content-Type: application/x-www-form-urlencoded',
-            'Accept: application/json',
-            'Authorization: Basic ' . base64_encode(UPS_CLIENT_ID . ':' . UPS_CLIENT_SECRET),
-        ],
-        CURLOPT_TIMEOUT        => 30,
-        CURLOPT_SSL_VERIFYPEER => true,
-    ]);
+            'Authorization: ' . $authorization,
+        ];
+        $postFields = 'grant_type=client_credentials&scope=public';
+        $response = $httpClient->post(UPS_OAUTH_URL, $headers, $postFields);
 
-    $response = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $curlErr  = curl_error($ch);
-    curl_close($ch);
-
-    if ($curlErr) {
-        return ['error' => "NETWORK ERROR: $curlErr"];
+        if ($response['status_code'] == 200) {
+            $data = json_decode($response['response'], true);
+            if (!empty($data['access_token'])) {
+                $_SESSION['ups_token'] = $data['access_token'];
+                $_SESSION['ups_token_expires'] = time() + (int)($data['expires_in'] ?? 14399) - 60;
+                return [
+                    'token'      => $data['access_token'],
+                    'expires_in' => $data['expires_in'] ?? '',
+                    'issued_at'  => $data['issued_at'] ?? '',
+                    'source'     => 'UPS SDK HttpClient (sandbox)',
+                ];
+            }
+        }
+        $errData = json_decode($response['response'], true);
+        $msg = $errData['error_description'] ?? $errData['error'] ?? "HTTP {$response['status_code']}";
+        return ['error' => "AUTH ERROR: $msg (check Client ID / Secret)"];
     }
 
-    $data = json_decode($response, true);
+    // Production: use the full official SDK ClientCredentialService
+    $service = new ClientCredentialService($httpClient);
+    $oauthResponse = $service->getAccessToken(UPS_CLIENT_ID, UPS_CLIENT_SECRET, [], []);
 
-    if ($httpCode !== 200 || empty($data['access_token'])) {
-        $msg = $data['error_description'] ?? $data['error'] ?? "HTTP $httpCode";
-        return ['error' => "AUTH ERROR: $msg (check Client ID / Secret on UPS Developer Portal)"];
+    $tokenInfo = $oauthResponse->getResponse();
+    if ($tokenInfo && $tokenInfo->getAccessToken()) {
+        $_SESSION['ups_token'] = $tokenInfo->getAccessToken();
+        $_SESSION['ups_token_expires'] = time() + (int)($tokenInfo->getExpiresIn() ?? 14399) - 60;
+        return [
+            'token'      => $tokenInfo->getAccessToken(),
+            'expires_in' => $tokenInfo->getExpiresIn(),
+            'issued_at'  => $tokenInfo->getIssuedAt(),
+            'status'     => $tokenInfo->getStatus(),
+            'source'     => 'UPS SDK ClientCredentialService (production)',
+        ];
     }
 
-    // Cache token in session
-    $_SESSION['ups_token'] = $data['access_token'];
-    $_SESSION['ups_token_expires'] = time() + (int)($data['expires_in'] ?? 14399) - 60;
-
-    return [
-        'token'      => $data['access_token'],
-        'expires_in' => $data['expires_in'],
-        'issued_at'  => $data['issued_at'] ?? '',
-    ];
+    // Auth failed - extract error from SDK response
+    $error = $oauthResponse->getError();
+    $msg = $error ? $error->getMessage() : 'Unknown authentication error';
+    return ['error' => "AUTH ERROR: $msg (check Client ID / Secret on UPS Developer Portal)"];
 }
+
+
+// ============================================================================
+// REST API HELPER (Rating, Address Validation, etc.)
+//
+// UPS does not provide PHP SDK classes for these APIs - only OpenAPI specs:
+// https://github.com/UPS-API/api-documentation
+//
+// We use the SDK's HttpClient for consistent HTTP handling.
+// ============================================================================
 
 /**
  * Make an authenticated POST request to a UPS REST API endpoint.
- * Returns ['data' => ...] on success, ['error' => ..., 'raw' => ...] on failure.
- *
- * All UPS REST endpoints follow the same auth pattern:
- *   Authorization: Bearer {access_token}
- *   Content-Type: application/json
- *   transId: unique-id (for debugging/support tickets)
- *   transactionSrc: your-app-name
+ * Uses the UPS SDK's HttpClient internally for HTTP transport.
  */
 function ups_api_call(string $url, array $payload, string $token): array
 {
-    $ch = curl_init($url);
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POST           => true,
-        CURLOPT_POSTFIELDS     => json_encode($payload),
-        CURLOPT_HTTPHEADER     => [
-            'Content-Type: application/json',
-            'Accept: application/json',
-            'Authorization: Bearer ' . $token,
-            'transId: ' . uniqid('ups-demo-'),
-            'transactionSrc: ups-php-demo',
-        ],
-        CURLOPT_TIMEOUT        => 30,
-        CURLOPT_SSL_VERIFYPEER => true,
-    ]);
+    $httpClient = new HttpClient(30);
+    $jsonBody = json_encode($payload);
 
-    $response = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $curlErr  = curl_error($ch);
-    curl_close($ch);
+    $headers = [
+        'Content-Type: application/json',
+        'Accept: application/json',
+        'Authorization: Bearer ' . $token,
+        'transId: ' . uniqid('ups-demo-'),
+        'transactionSrc: ups-php-demo',
+    ];
 
-    if ($curlErr) {
-        return ['error' => "NETWORK ERROR: $curlErr"];
+    try {
+        $response = $httpClient->post($url, $headers, $jsonBody);
+    } catch (\Exception $e) {
+        return ['error' => "NETWORK ERROR: " . $e->getMessage()];
     }
 
-    $data = json_decode($response, true);
+    $data = json_decode($response['response'], true);
 
-    if ($httpCode < 200 || $httpCode >= 300) {
-        $errMsg = "HTTP $httpCode";
-        // UPS returns errors in different structures depending on the API
+    if ($response['status_code'] < 200 || $response['status_code'] >= 300) {
+        $errMsg = "HTTP {$response['status_code']}";
         if (isset($data['response']['errors'])) {
             $parts = [];
             foreach ($data['response']['errors'] as $e) {
@@ -191,23 +222,22 @@ function ups_api_call(string $url, array $payload, string $token): array
             $detail = $data['Fault']['detail']['Errors']['ErrorDetail'];
             $errMsg = "[{$detail['PrimaryErrorCode']['Code']}] " . ($detail['PrimaryErrorCode']['Description'] ?? 'Unknown');
         }
-        return ['error' => $errMsg, 'http_code' => $httpCode, 'raw' => $data];
+        return ['error' => $errMsg, 'http_code' => $response['status_code'], 'raw' => $data];
     }
 
-    return ['data' => $data, 'http_code' => $httpCode];
+    return ['data' => $data, 'http_code' => $response['status_code']];
 }
 
-/**
- * Sanitize form input for safe HTML output.
- */
+
+// ============================================================================
+// UTILITY FUNCTIONS
+// ============================================================================
+
 function ups_clean(string $value): string
 {
     return htmlspecialchars(trim($value), ENT_QUOTES, 'UTF-8');
 }
 
-/**
- * Check if UPS credentials have been configured (not still placeholders).
- */
 function ups_credentials_set(): bool
 {
     return UPS_CLIENT_ID !== 'YOUR_CLIENT_ID'
@@ -215,17 +245,11 @@ function ups_credentials_set(): bool
         && UPS_ACCOUNT_NUMBER !== 'YOUR_ACCOUNT_NUMBER';
 }
 
-/**
- * Resolve a UPS service code to its human-readable name.
- */
 function ups_service_name(string $code): string
 {
     return UPS_SERVICES[$code] ?? "UPS Service $code";
 }
 
-/**
- * Format a UPS date string (YYYYMMDD) to readable format.
- */
 function ups_format_date(string $upsDate): string
 {
     if (strlen($upsDate) !== 8) return $upsDate;
@@ -233,9 +257,6 @@ function ups_format_date(string $upsDate): string
     return $dt ? $dt->format('D, M j, Y') : $upsDate;
 }
 
-/**
- * Format a UPS time string (HHMMSS) to readable format.
- */
 function ups_format_time(string $upsTime): string
 {
     if (strlen($upsTime) < 4) return $upsTime;
@@ -281,7 +302,6 @@ function ups_common_css(): string
     .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .form-group { display: flex; flex-direction: column; }
     .form-group.full { grid-column: 1 / -1; }
-    .form-group.third { }
     label { font-size: 0.85em; font-weight: 600; color: #555; margin-bottom: 4px; }
     input, select {
         padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px;
