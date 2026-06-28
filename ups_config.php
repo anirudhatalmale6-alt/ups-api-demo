@@ -266,6 +266,56 @@ function ups_format_time(string $upsTime): string
 }
 
 /**
+ * Calculate estimated delivery date by adding business days to a ship date.
+ * Skips weekends (Sat/Sun). Returns formatted date string.
+ */
+function ups_add_business_days(string $startDate, int $businessDays): string
+{
+    $dt = new DateTime($startDate);
+    $added = 0;
+    while ($added < $businessDays) {
+        $dt->modify('+1 day');
+        $dow = (int) $dt->format('N'); // 1=Mon ... 7=Sun
+        if ($dow <= 5) $added++;
+    }
+    return $dt->format('Ymd');
+}
+
+/**
+ * Extract delivery date string from a UPS RatedShipment entry.
+ * Tries TimeInTransit first, then calculates from BusinessDaysInTransit.
+ */
+function ups_get_delivery_string(array $shipment, string $shipDate = ''): string
+{
+    // 1. Try TimeInTransit (returned when DeliveryTimeInformation is in request)
+    $tit = $shipment['TimeInTransit']['ServiceSummary']['EstimatedArrival'] ?? [];
+    if (!empty($tit['Arrival']['Date'])) {
+        $str = ups_format_date($tit['Arrival']['Date']);
+        if (!empty($tit['Arrival']['Time'])) {
+            $str .= ' by ' . ups_format_time($tit['Arrival']['Time']);
+        }
+        return $str;
+    }
+
+    // 2. Calculate from BusinessDaysInTransit + ship date
+    $days = $shipment['GuaranteedDelivery']['BusinessDaysInTransit']
+        ?? $shipment['TimeInTransit']['ServiceSummary']['EstimatedArrival']['BusinessDaysInTransit']
+        ?? null;
+
+    if ($days !== null && (int)$days > 0) {
+        $base = $shipDate ?: date('Ymd');
+        $estDate = ups_add_business_days($base, (int)$days);
+        $str = ups_format_date($estDate);
+        if (!empty($shipment['GuaranteedDelivery']['DeliveryByTime'])) {
+            $str .= ' by ' . $shipment['GuaranteedDelivery']['DeliveryByTime'];
+        }
+        return $str;
+    }
+
+    return '-';
+}
+
+/**
  * Common CSS used across both pages.
  */
 function ups_common_css(): string

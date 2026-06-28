@@ -260,13 +260,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ups_credentials_set()) {
                                     ?? $s['TimeInTransit']['ServiceSummary']['EstimatedArrival']['BusinessDaysInTransit']
                                     ?? '-';
                                 $guar  = isset($s['GuaranteedDelivery']) ? 'Yes' : 'No';
-                                $titDate = $s['TimeInTransit']['ServiceSummary']['EstimatedArrival']['Arrival']['Date'] ?? '';
-                                $titTime = $s['TimeInTransit']['ServiceSummary']['EstimatedArrival']['Arrival']['Time'] ?? '';
-                                $delStr  = '-';
-                                if ($titDate) {
-                                    $delStr = ups_format_date($titDate);
-                                    if ($titTime) $delStr .= ' by ' . ups_format_time($titTime);
-                                }
+                                $delStr = ups_get_delivery_string($s);
                             ?>
                             <tr>
                                 <td><?= htmlspecialchars(ups_service_name($code)) ?></td>

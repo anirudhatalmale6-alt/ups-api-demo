@@ -296,27 +296,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ups_credentials_set()) {
                     $billWt    = $s['BillingWeight']['Weight'] ?? '-';
                     $billWtU   = $s['BillingWeight']['UnitOfMeasurement']['Code'] ?? 'LBS';
 
-                    // Transit time data from DeliveryTimeInformation response
+                    // Transit time data
                     $guarDays  = $s['GuaranteedDelivery']['BusinessDaysInTransit'] ?? null;
-                    $guarTime  = $s['GuaranteedDelivery']['DeliveryByTime'] ?? null;
-
-                    // TimeInTransit data (returned when DeliveryTimeInformation is in request)
                     $tit       = $s['TimeInTransit']['ServiceSummary']['EstimatedArrival'] ?? [];
                     $titDays   = $tit['BusinessDaysInTransit'] ?? $guarDays ?? '-';
-                    $titDate   = $tit['Arrival']['Date'] ?? '';
-                    $titTime   = $tit['Arrival']['Time'] ?? '';
                     $titDay    = $tit['DayOfWeek'] ?? '';
                     $titPickup = $tit['Pickup']['Date'] ?? '';
 
-                    // Build delivery date string
-                    $deliveryStr = '-';
-                    if ($titDate) {
-                        $deliveryStr = ups_format_date($titDate);
-                        if ($titTime) $deliveryStr .= ' by ' . ups_format_time($titTime);
-                    } elseif ($guarTime) {
-                        $deliveryStr = $guarTime;
-                    }
-
+                    $deliveryStr = ups_get_delivery_string($s, $shipDate);
                     $isGuaranteed = isset($s['GuaranteedDelivery']);
 
                     // Surcharges
@@ -431,7 +418,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ups_credentials_set()) {
                                 $n2 = $s['NegotiatedRateCharges']['TotalCharge']['MonetaryValue'] ?? '-';
                                 $d2 = $s['GuaranteedDelivery']['BusinessDaysInTransit']
                                     ?? $s['TimeInTransit']['ServiceSummary']['EstimatedArrival']['BusinessDaysInTransit'] ?? '-';
-                                $dt2 = $s['TimeInTransit']['ServiceSummary']['EstimatedArrival']['Arrival']['Date'] ?? '';
+                                $del2 = ups_get_delivery_string($s, $shipDate);
                                 $g2 = isset($s['GuaranteedDelivery']);
                                 $bw2 = ($s['BillingWeight']['Weight'] ?? '-') . ' ' . ($s['BillingWeight']['UnitOfMeasurement']['Code'] ?? '');
                             ?>
@@ -441,7 +428,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ups_credentials_set()) {
                                 <td class="price">$<?= htmlspecialchars($t2) ?></td>
                                 <td><?= $n2 !== '-' ? '<span class="price">$' . htmlspecialchars($n2) . '</span>' : '-' ?></td>
                                 <td><?= htmlspecialchars($d2) ?></td>
-                                <td><?= $dt2 ? ups_format_date($dt2) : '-' ?></td>
+                                <td><?= htmlspecialchars($del2) ?></td>
                                 <td><span class="badge <?= $g2 ? 'badge-yes' : 'badge-warn' ?>"><?= $g2 ? 'Yes' : 'No' ?></span></td>
                                 <td><?= htmlspecialchars($bw2) ?></td>
                             </tr>
