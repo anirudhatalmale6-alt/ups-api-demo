@@ -32,6 +32,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ups_credentials_set()) {
         // --- RATE CHECK ---
         if ($action === 'get_rates') {
             $activeTab = 'rates';
+
+            // Build address lines (line 1 + optional line 2)
+            $fromLines = array_filter([ups_clean($_POST['from_street'] ?? ''), ups_clean($_POST['from_street2'] ?? '')]);
+            $toLines   = array_filter([ups_clean($_POST['to_street'] ?? ''), ups_clean($_POST['to_street2'] ?? '')]);
+
+            // Adjust pickup date to next business day (UPS won't calculate Ground transit for weekends)
+            $pickupDate = ups_next_business_day(date('Ymd'));
+
             $payload = [
                 'RateRequest' => [
                     'Request' => [
@@ -43,7 +51,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ups_credentials_set()) {
                             'Name' => ups_clean($_POST['from_name'] ?? 'Sender'),
                             'ShipperNumber' => UPS_ACCOUNT_NUMBER,
                             'Address' => [
-                                'AddressLine'       => [ups_clean($_POST['from_street'] ?? '')],
+                                'AddressLine'       => array_values($fromLines),
                                 'City'              => ups_clean($_POST['from_city'] ?? ''),
                                 'StateProvinceCode' => ups_clean($_POST['from_state'] ?? ''),
                                 'PostalCode'        => ups_clean($_POST['from_zip'] ?? ''),
@@ -53,7 +61,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ups_credentials_set()) {
                         'ShipTo' => [
                             'Name' => ups_clean($_POST['to_name'] ?? 'Receiver'),
                             'Address' => [
-                                'AddressLine'       => [ups_clean($_POST['to_street'] ?? '')],
+                                'AddressLine'       => array_values($toLines),
                                 'City'              => ups_clean($_POST['to_city'] ?? ''),
                                 'StateProvinceCode' => ups_clean($_POST['to_state'] ?? ''),
                                 'PostalCode'        => ups_clean($_POST['to_zip'] ?? ''),
@@ -63,7 +71,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ups_credentials_set()) {
                         'ShipFrom' => [
                             'Name' => ups_clean($_POST['from_name'] ?? 'Sender'),
                             'Address' => [
-                                'AddressLine'       => [ups_clean($_POST['from_street'] ?? '')],
+                                'AddressLine'       => array_values($fromLines),
                                 'City'              => ups_clean($_POST['from_city'] ?? ''),
                                 'StateProvinceCode' => ups_clean($_POST['from_state'] ?? ''),
                                 'PostalCode'        => ups_clean($_POST['from_zip'] ?? ''),
@@ -89,8 +97,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ups_credentials_set()) {
                         'DeliveryTimeInformation' => [
                             'PackageBillType' => '03',
                             'Pickup' => [
-                                'Date' => date('Ymd'),
-                                'Time' => date('Hi') . '00',
+                                'Date' => $pickupDate,
+                                'Time' => '100000',
                             ],
                         ],
                     ],
@@ -126,11 +134,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ups_credentials_set()) {
         // --- ADDRESS VALIDATION ---
         if ($action === 'validate_address') {
             $activeTab = 'address';
+            $addrLines = array_values(array_filter([
+                ups_clean($_POST['addr_street'] ?? ''),
+                ups_clean($_POST['addr_street2'] ?? ''),
+            ]));
             $payload = [
                 'XAVRequest' => [
                     'AddressKeyFormat' => [
                         'ConsigneeName'      => ups_clean($_POST['addr_name'] ?? ''),
-                        'AddressLine'        => [ups_clean($_POST['addr_street'] ?? '')],
+                        'AddressLine'        => $addrLines,
                         'PoliticalDivision2' => ups_clean($_POST['addr_city'] ?? ''),
                         'PoliticalDivision1' => ups_clean($_POST['addr_state'] ?? ''),
                         'PostcodePrimaryLow' => ups_clean($_POST['addr_zip'] ?? ''),
@@ -209,6 +221,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ups_credentials_set()) {
                     <input name="from_name" value="<?= ups_clean($_POST['from_name'] ?? 'My Company') ?>"></div>
                 <div class="form-group full"><label>Street Address</label>
                     <input name="from_street" value="<?= ups_clean($_POST['from_street'] ?? '123 Main St') ?>" required></div>
+                <div class="form-group full"><label>Apt / Suite / Unit (optional)</label>
+                    <input name="from_street2" value="<?= ups_clean($_POST['from_street2'] ?? '') ?>" placeholder="Suite 100, Apt 2B, etc."></div>
                 <div class="form-group"><label>City</label>
                     <input name="from_city" value="<?= ups_clean($_POST['from_city'] ?? 'New York') ?>" required></div>
                 <div class="form-group"><label>State</label>
@@ -225,6 +239,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ups_credentials_set()) {
                     <input name="to_name" value="<?= ups_clean($_POST['to_name'] ?? 'Customer') ?>"></div>
                 <div class="form-group full"><label>Street Address</label>
                     <input name="to_street" value="<?= ups_clean($_POST['to_street'] ?? '456 Oak Ave') ?>" required></div>
+                <div class="form-group full"><label>Apt / Suite / Unit (optional)</label>
+                    <input name="to_street2" value="<?= ups_clean($_POST['to_street2'] ?? '') ?>" placeholder="Suite 100, Apt 2B, etc."></div>
                 <div class="form-group"><label>City</label>
                     <input name="to_city" value="<?= ups_clean($_POST['to_city'] ?? 'Los Angeles') ?>" required></div>
                 <div class="form-group"><label>State</label>
@@ -316,6 +332,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ups_credentials_set()) {
                     <input name="addr_name" value="<?= ups_clean($_POST['addr_name'] ?? '') ?>"></div>
                 <div class="form-group full"><label>Street Address</label>
                     <input name="addr_street" value="<?= ups_clean($_POST['addr_street'] ?? '1 Wall St') ?>" required></div>
+                <div class="form-group full"><label>Apt / Suite / Unit (optional)</label>
+                    <input name="addr_street2" value="<?= ups_clean($_POST['addr_street2'] ?? '') ?>" placeholder="Suite 100, Apt 2B, etc."></div>
                 <div class="form-group"><label>City</label>
                     <input name="addr_city" value="<?= ups_clean($_POST['addr_city'] ?? 'New York') ?>" required></div>
                 <div class="form-group"><label>State</label>

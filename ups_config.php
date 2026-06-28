@@ -266,6 +266,20 @@ function ups_format_time(string $upsTime): string
 }
 
 /**
+ * Adjust a date to the next business day if it falls on a weekend.
+ * UPS does not pick up on weekends, so the API won't return transit
+ * data for Saturday/Sunday pickup dates.
+ */
+function ups_next_business_day(string $ymd): string
+{
+    $dt = new DateTime($ymd);
+    $dow = (int) $dt->format('N');
+    if ($dow === 6) $dt->modify('+2 days'); // Sat -> Mon
+    if ($dow === 7) $dt->modify('+1 day');  // Sun -> Mon
+    return $dt->format('Ymd');
+}
+
+/**
  * Calculate estimated delivery date by adding business days to a ship date.
  * Skips weekends (Sat/Sun). Returns formatted date string.
  */

@@ -29,10 +29,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ups_credentials_set()) {
     } else {
         $token = $auth['token'];
 
-        // Build the ship date from user input
+        // Build the ship date from user input, adjust to next business day
         $userDate = $_POST['ship_date'] ?? date('Y-m-d');
-        $shipDate = str_replace('-', '', $userDate); // Convert YYYY-MM-DD to YYYYMMDD
+        $shipDate = ups_next_business_day(str_replace('-', '', $userDate));
         $shipTime = ups_clean($_POST['ship_time'] ?? '1000') . '00'; // HHMMSS
+
+        // Build address lines (line 1 + optional line 2)
+        $fromLines = array_values(array_filter([ups_clean($_POST['from_street'] ?? ''), ups_clean($_POST['from_street2'] ?? '')]));
+        $toLines   = array_values(array_filter([ups_clean($_POST['to_street'] ?? ''), ups_clean($_POST['to_street2'] ?? '')]));
 
         $payload = [
             'RateRequest' => [
@@ -45,7 +49,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ups_credentials_set()) {
                         'Name' => ups_clean($_POST['from_name'] ?? 'Sender'),
                         'ShipperNumber' => UPS_ACCOUNT_NUMBER,
                         'Address' => [
-                            'AddressLine'       => [ups_clean($_POST['from_street'] ?? '')],
+                            'AddressLine'       => $fromLines,
                             'City'              => ups_clean($_POST['from_city'] ?? ''),
                             'StateProvinceCode' => ups_clean($_POST['from_state'] ?? ''),
                             'PostalCode'        => ups_clean($_POST['from_zip'] ?? ''),
@@ -55,7 +59,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ups_credentials_set()) {
                     'ShipTo' => [
                         'Name' => ups_clean($_POST['to_name'] ?? 'Receiver'),
                         'Address' => [
-                            'AddressLine'       => [ups_clean($_POST['to_street'] ?? '')],
+                            'AddressLine'       => $toLines,
                             'City'              => ups_clean($_POST['to_city'] ?? ''),
                             'StateProvinceCode' => ups_clean($_POST['to_state'] ?? ''),
                             'PostalCode'        => ups_clean($_POST['to_zip'] ?? ''),
@@ -66,7 +70,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ups_credentials_set()) {
                     'ShipFrom' => [
                         'Name' => ups_clean($_POST['from_name'] ?? 'Sender'),
                         'Address' => [
-                            'AddressLine'       => [ups_clean($_POST['from_street'] ?? '')],
+                            'AddressLine'       => $fromLines,
                             'City'              => ups_clean($_POST['from_city'] ?? ''),
                             'StateProvinceCode' => ups_clean($_POST['from_state'] ?? ''),
                             'PostalCode'        => ups_clean($_POST['from_zip'] ?? ''),
@@ -89,9 +93,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ups_credentials_set()) {
                     'ShipmentRatingOptions' => [
                         'NegotiatedRatesIndicator' => '',
                     ],
-                    // This is what triggers delivery time estimates in the response
                     'DeliveryTimeInformation' => [
-                        'PackageBillType' => '03', // 03 = Non-Document, 01 = Document, 02 = WWD
+                        'PackageBillType' => '03',
                         'Pickup' => [
                             'Date' => $shipDate,
                             'Time' => $shipTime,
@@ -207,6 +210,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ups_credentials_set()) {
                     <input name="from_name" value="<?= ups_clean($_POST['from_name'] ?? 'My Company') ?>"></div>
                 <div class="form-group full"><label>Street Address</label>
                     <input name="from_street" value="<?= ups_clean($_POST['from_street'] ?? '123 Main St') ?>" required></div>
+                <div class="form-group full"><label>Apt / Suite / Unit (optional)</label>
+                    <input name="from_street2" value="<?= ups_clean($_POST['from_street2'] ?? '') ?>" placeholder="Suite 100, Apt 2B, etc."></div>
                 <div class="form-group"><label>City</label>
                     <input name="from_city" value="<?= ups_clean($_POST['from_city'] ?? 'New York') ?>" required></div>
                 <div class="form-group"><label>State</label>
@@ -223,6 +228,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ups_credentials_set()) {
                     <input name="to_name" value="<?= ups_clean($_POST['to_name'] ?? 'Customer') ?>"></div>
                 <div class="form-group full"><label>Street Address</label>
                     <input name="to_street" value="<?= ups_clean($_POST['to_street'] ?? '456 Oak Ave') ?>" required></div>
+                <div class="form-group full"><label>Apt / Suite / Unit (optional)</label>
+                    <input name="to_street2" value="<?= ups_clean($_POST['to_street2'] ?? '') ?>" placeholder="Suite 100, Apt 2B, etc."></div>
                 <div class="form-group"><label>City</label>
                     <input name="to_city" value="<?= ups_clean($_POST['to_city'] ?? 'Los Angeles') ?>" required></div>
                 <div class="form-group"><label>State</label>
