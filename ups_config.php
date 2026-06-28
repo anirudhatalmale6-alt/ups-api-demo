@@ -408,7 +408,7 @@ function ups_enrich_transit_times(array &$rated, string $token, array $fromAddr,
     $services = $result['data']['emsResponse']['services'] ?? [];
     $transitMap = [];
     foreach ($services as $svc) {
-        $titCode = $svc['serviceCode'] ?? '';
+        $titCode = $svc['serviceLevel'] ?? $svc['serviceCode'] ?? '';
         $ratingCode = ups_tit_code_to_rating($titCode);
         if ($ratingCode) {
             $transitMap[$ratingCode] = [
