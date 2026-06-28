@@ -107,6 +107,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ups_credentials_set()) {
         }
 
         $result = ups_api_call(UPS_RATING_URL, $payload, $token);
+
+        // Enrich services missing transit data (e.g. UPS Ground) via Time In Transit API
+        if (!isset($result['error'])) {
+            $resp = $result['data']['RateResponse'] ?? [];
+            $rated = $resp['RatedShipment'] ?? [];
+            if (isset($rated['Service'])) $rated = [$rated];
+
+            $fromAddr = [
+                'CountryCode'       => ups_clean($_POST['from_country'] ?? 'US'),
+                'StateProvinceCode' => ups_clean($_POST['from_state'] ?? ''),
+                'City'              => ups_clean($_POST['from_city'] ?? ''),
+                'PostalCode'        => ups_clean($_POST['from_zip'] ?? ''),
+            ];
+            $toAddr = [
+                'CountryCode'       => ups_clean($_POST['to_country'] ?? 'US'),
+                'StateProvinceCode' => ups_clean($_POST['to_state'] ?? ''),
+                'City'              => ups_clean($_POST['to_city'] ?? ''),
+                'PostalCode'        => ups_clean($_POST['to_zip'] ?? ''),
+            ];
+
+            ups_enrich_transit_times($rated, $token, $fromAddr, $toAddr, $shipDate);
+            $result['data']['RateResponse']['RatedShipment'] = $rated;
+        }
     }
 }
 ?>

@@ -98,6 +98,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ups_credentials_set()) {
             ];
 
             $rateResult = ups_api_call(UPS_RATING_URL, $payload, $token);
+
+            // Enrich services missing transit data (e.g. UPS Ground)
+            if (!isset($rateResult['error'])) {
+                $resp = $rateResult['data']['RateResponse'] ?? [];
+                $enrichRated = $resp['RatedShipment'] ?? [];
+                if (isset($enrichRated['Service'])) $enrichRated = [$enrichRated];
+
+                $fromAddr = [
+                    'CountryCode'       => ups_clean($_POST['from_country'] ?? 'US'),
+                    'StateProvinceCode' => ups_clean($_POST['from_state'] ?? ''),
+                    'City'              => ups_clean($_POST['from_city'] ?? ''),
+                    'PostalCode'        => ups_clean($_POST['from_zip'] ?? ''),
+                ];
+                $toAddr = [
+                    'CountryCode'       => ups_clean($_POST['to_country'] ?? 'US'),
+                    'StateProvinceCode' => ups_clean($_POST['to_state'] ?? ''),
+                    'City'              => ups_clean($_POST['to_city'] ?? ''),
+                    'PostalCode'        => ups_clean($_POST['to_zip'] ?? ''),
+                ];
+
+                ups_enrich_transit_times($enrichRated, $token, $fromAddr, $toAddr, date('Ymd'));
+                $rateResult['data']['RateResponse']['RatedShipment'] = $enrichRated;
+            }
         }
 
         // --- ADDRESS VALIDATION ---

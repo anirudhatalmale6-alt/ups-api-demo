@@ -316,6 +316,83 @@ function ups_get_delivery_string(array $shipment, string $shipDate = ''): string
 }
 
 /**
+ * Enrich RatedShipment array with transit time data for services missing it.
+ * Calls UPS Time In Transit API and merges results back into the rated shipments.
+ */
+function ups_enrich_transit_times(array &$rated, string $token, array $fromAddr, array $toAddr, string $shipDate): void
+{
+    $hasMissing = false;
+    foreach ($rated as $s) {
+        $days = $s['GuaranteedDelivery']['BusinessDaysInTransit']
+            ?? $s['TimeInTransit']['ServiceSummary']['EstimatedArrival']['BusinessDaysInTransit']
+            ?? null;
+        if ($days === null) { $hasMissing = true; break; }
+    }
+    if (!$hasMissing) return;
+
+    $payload = [
+        'originCountryCode'      => $fromAddr['CountryCode'] ?? 'US',
+        'originStateProvince'    => $fromAddr['StateProvinceCode'] ?? '',
+        'originCityName'         => $fromAddr['City'] ?? '',
+        'originPostalCode'       => $fromAddr['PostalCode'] ?? '',
+        'destinationCountryCode' => $toAddr['CountryCode'] ?? 'US',
+        'destinationStateProvince' => $toAddr['StateProvinceCode'] ?? '',
+        'destinationCityName'    => $toAddr['City'] ?? '',
+        'destinationPostalCode'  => $toAddr['PostalCode'] ?? '',
+        'weight'                 => '5',
+        'weightUnitOfMeasure'    => 'LBS',
+        'shipDate'               => $shipDate,
+        'shipTime'               => '',
+        'residentialIndicator'   => '',
+        'numberOfPackages'       => '1',
+    ];
+
+    $result = ups_api_call(UPS_TIT_URL, $payload, $token);
+    if (isset($result['error'])) return;
+
+    $services = $result['data']['emsResponse']['services'] ?? [];
+    $transitMap = [];
+    foreach ($services as $svc) {
+        $code = $svc['serviceCode'] ?? '';
+        if ($code) {
+            $transitMap[$code] = [
+                'businessDays' => $svc['businessTransitDays'] ?? $svc['totalTransitDays'] ?? null,
+                'deliveryDate' => $svc['deliveryDate'] ?? '',
+                'deliveryTime' => $svc['deliveryTime'] ?? $svc['commitTime'] ?? '',
+                'deliveryDay'  => $svc['deliveryDayOfWeek'] ?? '',
+            ];
+        }
+    }
+
+    foreach ($rated as &$s) {
+        $code = $s['Service']['Code'] ?? '';
+        $existingDays = $s['GuaranteedDelivery']['BusinessDaysInTransit']
+            ?? $s['TimeInTransit']['ServiceSummary']['EstimatedArrival']['BusinessDaysInTransit']
+            ?? null;
+
+        if ($existingDays === null && isset($transitMap[$code])) {
+            $tData = $transitMap[$code];
+            if ($tData['businessDays'] !== null) {
+                $s['_transitEnriched'] = true;
+                $s['TimeInTransit'] = [
+                    'ServiceSummary' => [
+                        'EstimatedArrival' => [
+                            'BusinessDaysInTransit' => (string)$tData['businessDays'],
+                            'Arrival' => [
+                                'Date' => $tData['deliveryDate'],
+                                'Time' => $tData['deliveryTime'],
+                            ],
+                            'DayOfWeek' => $tData['deliveryDay'],
+                        ],
+                    ],
+                ];
+            }
+        }
+    }
+    unset($s);
+}
+
+/**
  * Common CSS used across both pages.
  */
 function ups_common_css(): string
