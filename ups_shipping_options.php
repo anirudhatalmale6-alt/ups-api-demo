@@ -471,6 +471,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ups_credentials_set()) {
 
         <p class="raw-toggle" onclick="toggleRaw('raw-json')">&#9654; Show raw JSON response (for integration reference)</p>
         <pre class="raw-json" id="raw-json"><?= htmlspecialchars(json_encode($result['data'] ?? $result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)) ?></pre>
+        <?php if (!empty($GLOBALS['_ups_tit_debug'])): ?>
+            <p class="raw-toggle" onclick="toggleRaw('raw-tit')">&#9654; Show Time In Transit API response (debug)</p>
+            <pre class="raw-json" id="raw-tit"><?= htmlspecialchars(json_encode($GLOBALS['_ups_tit_debug'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)) ?></pre>
+        <?php endif; ?>
     <?php endif; ?>
 </div>
 

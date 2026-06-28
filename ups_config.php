@@ -330,6 +330,34 @@ function ups_get_delivery_string(array $shipment, string $shipDate = ''): string
 }
 
 /**
+ * Map TIT API service codes to Rating API service codes.
+ * TIT uses alpha codes (GND), Rating uses numeric (03).
+ */
+function ups_tit_code_to_rating(string $titCode): string
+{
+    $map = [
+        'GND' => '03', 'GNDRES' => '03', 'GND_RES' => '03',
+        '1DA' => '01', '1DM' => '14', '1DP' => '13',
+        '2DA' => '02', '2DM' => '59',
+        '3DS' => '12',
+        '01'  => '01', '02'  => '02', '03'  => '03',
+        '07'  => '07', '08'  => '08', '11'  => '11',
+        '12'  => '12', '13'  => '13', '14'  => '14',
+        '59'  => '59', '65'  => '65', '92'  => '92',
+        '93'  => '93', '96'  => '96',
+    ];
+    return $map[$titCode] ?? $titCode;
+}
+
+/**
+ * Convert YYYY-MM-DD to YYYYMMDD format.
+ */
+function ups_date_to_ymd(string $date): string
+{
+    return str_replace('-', '', $date);
+}
+
+/**
  * Enrich RatedShipment array with transit time data for services missing it.
  * Calls UPS Time In Transit API and merges results back into the rated shipments.
  */
@@ -344,36 +372,47 @@ function ups_enrich_transit_times(array &$rated, string $token, array $fromAddr,
     }
     if (!$hasMissing) return;
 
+    // TIT API expects YYYY-MM-DD format
+    $titShipDate = $shipDate;
+    if (strlen($shipDate) === 8 && strpos($shipDate, '-') === false) {
+        $titShipDate = substr($shipDate, 0, 4) . '-' . substr($shipDate, 4, 2) . '-' . substr($shipDate, 6, 2);
+    }
+
     $payload = [
-        'originCountryCode'      => $fromAddr['CountryCode'] ?? 'US',
-        'originStateProvince'    => $fromAddr['StateProvinceCode'] ?? '',
-        'originCityName'         => $fromAddr['City'] ?? '',
-        'originPostalCode'       => $fromAddr['PostalCode'] ?? '',
-        'destinationCountryCode' => $toAddr['CountryCode'] ?? 'US',
+        'originCountryCode'        => $fromAddr['CountryCode'] ?? 'US',
+        'originStateProvince'      => $fromAddr['StateProvinceCode'] ?? '',
+        'originCityName'           => $fromAddr['City'] ?? '',
+        'originPostalCode'         => $fromAddr['PostalCode'] ?? '',
+        'destinationCountryCode'   => $toAddr['CountryCode'] ?? 'US',
         'destinationStateProvince' => $toAddr['StateProvinceCode'] ?? '',
-        'destinationCityName'    => $toAddr['City'] ?? '',
-        'destinationPostalCode'  => $toAddr['PostalCode'] ?? '',
-        'weight'                 => '5',
-        'weightUnitOfMeasure'    => 'LBS',
-        'shipDate'               => $shipDate,
-        'shipTime'               => '',
-        'residentialIndicator'   => '',
-        'numberOfPackages'       => '1',
+        'destinationCityName'      => $toAddr['City'] ?? '',
+        'destinationPostalCode'    => $toAddr['PostalCode'] ?? '',
+        'weight'                   => '5.0',
+        'weightUnitOfMeasure'      => 'LBS',
+        'shipDate'                 => $titShipDate,
+        'shipTime'                 => '',
+        'numberOfPackages'         => '1',
     ];
 
     $result = ups_api_call(UPS_TIT_URL, $payload, $token);
+
+    // Store debug info for raw JSON display
+    $GLOBALS['_ups_tit_debug'] = $result;
+
     if (isset($result['error'])) return;
 
     $services = $result['data']['emsResponse']['services'] ?? [];
     $transitMap = [];
     foreach ($services as $svc) {
-        $code = $svc['serviceCode'] ?? '';
-        if ($code) {
-            $transitMap[$code] = [
+        $titCode = $svc['serviceCode'] ?? '';
+        $ratingCode = ups_tit_code_to_rating($titCode);
+        if ($ratingCode) {
+            $transitMap[$ratingCode] = [
                 'businessDays' => $svc['businessTransitDays'] ?? $svc['totalTransitDays'] ?? null,
                 'deliveryDate' => $svc['deliveryDate'] ?? '',
                 'deliveryTime' => $svc['deliveryTime'] ?? $svc['commitTime'] ?? '',
                 'deliveryDay'  => $svc['deliveryDayOfWeek'] ?? '',
+                'titCode'      => $titCode,
             ];
         }
     }
@@ -387,14 +426,19 @@ function ups_enrich_transit_times(array &$rated, string $token, array $fromAddr,
         if ($existingDays === null && isset($transitMap[$code])) {
             $tData = $transitMap[$code];
             if ($tData['businessDays'] !== null) {
+                // Convert YYYY-MM-DD dates to YYYYMMDD for ups_format_date()
+                $arrDate = ups_date_to_ymd($tData['deliveryDate']);
+                // Convert HH:MM:SS time to HHMMSS for ups_format_time()
+                $arrTime = str_replace(':', '', $tData['deliveryTime']);
+
                 $s['_transitEnriched'] = true;
                 $s['TimeInTransit'] = [
                     'ServiceSummary' => [
                         'EstimatedArrival' => [
                             'BusinessDaysInTransit' => (string)$tData['businessDays'],
                             'Arrival' => [
-                                'Date' => $tData['deliveryDate'],
-                                'Time' => $tData['deliveryTime'],
+                                'Date' => $arrDate,
+                                'Time' => $arrTime,
                             ],
                             'DayOfWeek' => $tData['deliveryDay'],
                         ],
