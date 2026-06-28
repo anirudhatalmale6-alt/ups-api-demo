@@ -86,6 +86,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ups_credentials_set()) {
                         'ShipmentRatingOptions' => [
                             'NegotiatedRatesIndicator' => '',
                         ],
+                        'DeliveryTimeInformation' => [
+                            'PackageBillType' => '03',
+                            'Pickup' => [
+                                'Date' => date('Ymd'),
+                                'Time' => date('Hi') . '00',
+                            ],
+                        ],
                     ],
                 ],
             ];
@@ -241,7 +248,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ups_credentials_set()) {
                 <div class="alert alert-success">Found <strong><?= count($rated) ?></strong> available service(s)</div>
                 <?php if ($rated): ?>
                     <table class="results">
-                        <thead><tr><th>Service</th><th>Code</th><th>Total Cost</th><th>Negotiated</th><th>Currency</th><th>Transit</th><th>Guaranteed</th></tr></thead>
+                        <thead><tr><th>Service</th><th>Code</th><th>Total Cost</th><th>Negotiated</th><th>Est. Delivery</th><th>Transit</th><th>Guaranteed</th></tr></thead>
                         <tbody>
                         <?php foreach ($rated as $s): ?>
                             <?php
@@ -253,13 +260,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ups_credentials_set()) {
                                     ?? $s['TimeInTransit']['ServiceSummary']['EstimatedArrival']['BusinessDaysInTransit']
                                     ?? '-';
                                 $guar  = isset($s['GuaranteedDelivery']) ? 'Yes' : 'No';
+                                $titDate = $s['TimeInTransit']['ServiceSummary']['EstimatedArrival']['Arrival']['Date'] ?? '';
+                                $titTime = $s['TimeInTransit']['ServiceSummary']['EstimatedArrival']['Arrival']['Time'] ?? '';
+                                $delStr  = '-';
+                                if ($titDate) {
+                                    $delStr = ups_format_date($titDate);
+                                    if ($titTime) $delStr .= ' by ' . ups_format_time($titTime);
+                                }
                             ?>
                             <tr>
                                 <td><?= htmlspecialchars(ups_service_name($code)) ?></td>
                                 <td><?= htmlspecialchars($code) ?></td>
                                 <td class="price">$<?= htmlspecialchars($total) ?></td>
                                 <td><?= $neg !== '-' ? '<span class="price">$' . htmlspecialchars($neg) . '</span>' : '-' ?></td>
-                                <td><?= htmlspecialchars($curr) ?></td>
+                                <td><?= htmlspecialchars($delStr) ?></td>
                                 <td><?= htmlspecialchars($days) ?> day(s)</td>
                                 <td><span class="badge <?= $guar === 'Yes' ? 'badge-yes' : '' ?>"><?= $guar ?></span></td>
                             </tr>
