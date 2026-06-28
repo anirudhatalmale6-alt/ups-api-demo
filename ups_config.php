@@ -301,13 +301,16 @@ function ups_add_business_days(string $startDate, int $businessDays): string
  */
 function ups_get_delivery_string(array $shipment, string $shipDate = ''): string
 {
-    // 1. Try TimeInTransit (returned when DeliveryTimeInformation is in request)
+    $isEstimate = !empty($shipment['_transitEstimated']);
+
+    // 1. Try TimeInTransit (from Rating API or TIT API enrichment)
     $tit = $shipment['TimeInTransit']['ServiceSummary']['EstimatedArrival'] ?? [];
     if (!empty($tit['Arrival']['Date'])) {
         $str = ups_format_date($tit['Arrival']['Date']);
-        if (!empty($tit['Arrival']['Time'])) {
+        if (!$isEstimate && !empty($tit['Arrival']['Time']) && $tit['Arrival']['Time'] !== '235900') {
             $str .= ' by ' . ups_format_time($tit['Arrival']['Time']);
         }
+        if ($isEstimate) $str .= ' (est.)';
         return $str;
     }
 
@@ -323,6 +326,7 @@ function ups_get_delivery_string(array $shipment, string $shipDate = ''): string
         if (!empty($shipment['GuaranteedDelivery']['DeliveryByTime'])) {
             $str .= ' by ' . $shipment['GuaranteedDelivery']['DeliveryByTime'];
         }
+        if ($isEstimate) $str .= ' (est.)';
         return $str;
     }
 
@@ -445,6 +449,65 @@ function ups_enrich_transit_times(array &$rated, string $token, array $fromAddr,
                     ],
                 ];
             }
+        }
+    }
+    unset($s);
+
+    // If TIT API failed (e.g. 401 - not enabled on account), use zip-based estimate
+    if (isset($result['error'])) {
+        ups_estimate_ground_transit($rated, $fromAddr, $toAddr, $shipDate);
+    }
+}
+
+/**
+ * Estimate UPS Ground transit days based on zip code distance.
+ * Uses the first 3 digits of origin/destination zip to estimate UPS zone.
+ * This is a fallback when the Time In Transit API is not available.
+ */
+function ups_estimate_ground_transit(array &$rated, array $fromAddr, array $toAddr, string $shipDate): void
+{
+    $fromZip = $fromAddr['PostalCode'] ?? '';
+    $toZip   = $toAddr['PostalCode'] ?? '';
+    if (strlen($fromZip) < 3 || strlen($toZip) < 3) return;
+
+    $fromPrefix = (int) substr($fromZip, 0, 3);
+    $toPrefix   = (int) substr($toZip, 0, 3);
+    $diff = abs($fromPrefix - $toPrefix);
+
+    // Estimate business days based on 3-digit zip prefix distance
+    if ($diff <= 10) {
+        $estDays = 1; // Same area
+    } elseif ($diff <= 50) {
+        $estDays = 2; // Same region
+    } elseif ($diff <= 200) {
+        $estDays = 3; // Adjacent region
+    } elseif ($diff <= 400) {
+        $estDays = 4; // Cross-region
+    } else {
+        $estDays = 5; // Cross-country
+    }
+
+    foreach ($rated as &$s) {
+        $code = $s['Service']['Code'] ?? '';
+        $existingDays = $s['GuaranteedDelivery']['BusinessDaysInTransit']
+            ?? $s['TimeInTransit']['ServiceSummary']['EstimatedArrival']['BusinessDaysInTransit']
+            ?? null;
+
+        if ($existingDays === null && $code === '03') {
+            $estDate = ups_add_business_days($shipDate, $estDays);
+            $s['_transitEstimated'] = true;
+            $s['TimeInTransit'] = [
+                'ServiceSummary' => [
+                    'EstimatedArrival' => [
+                        'BusinessDaysInTransit' => (string)$estDays,
+                        'Arrival' => [
+                            'Date' => $estDate,
+                            'Time' => '235900',
+                        ],
+                        'DayOfWeek' => '',
+                    ],
+                ],
+            ];
         }
     }
     unset($s);
